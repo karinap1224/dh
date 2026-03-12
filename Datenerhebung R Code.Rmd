@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "Datenerhebung Fehlerquellen: Missing Data Analyse"
 output: html_document
 date: "2026-03-11"
 ---
@@ -142,4 +142,5 @@ b
 #koeffizienten sind nah beinander, künstlich eingeführte fehlende Werte unter MCAR verzerren den Koeffizienten kaum
 #Der unter MCAR geschätzte Koeffizient für Bildungsjahre liegt mit 0.224 nur geringfügig unter dem Referenzwert von 0.226. Die Abweichung beträgt rund -0.002 und ist damit sehr klein. Dies deutet darauf hin, dass zufällig fehlende Werte auf der Einkommensvariable die Schätzung des Bildungseffekts nur minimal beeinflussen.
 ```
+
 
