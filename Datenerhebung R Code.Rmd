@@ -1,0 +1,145 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-03-11"
+---
+
+```{r}
+library(haven)
+library(dplyr)
+library(mice)
+library(ggplot2)
+library(purrr)
+library(tidyr)
+library(broom)
+```
+Analyse Vorgehen:
+Ess Datensatz aufbereiten
+Subdatensatz mit Variablen erstellen
+Referzendatensatz aus vollständigen Fällen bilden
+Referenzregression rechnen
+Missingness künstlich erzeugen
+Korrekturverfahren
+Ergebnisse mit Referenz vergleichen anhand von Bias der Koeffizienten
+```{r}
+getwd()
+setwd("C:/Users/karin/Desktop/ESS Datenerhebung und Fehlerquellen")
+ess <- read.csv("ESS.csv")
+
+```
+
+
+#Bildungvariablen
+edudde1: Höchster allgemeinbildener Schulabschluss
+ 0-5: Grundschule nicht beendet, Grundschule, Realschule, Fachhochschulreife, Abitur
+ 7777 8888 9999 rausnehmen
+
+eisced - Highest level of education, ES - ISCED
+
+eduyrs - Years of full-time education completed
+
+Einkommen:
+hinctnta - Household's total net income, all sources
+
+```{r}
+de <- ess %>%
+  filter(cntry == "DE")
+
+View(de)
+summary(de)
+dim(de)
+str(de)
+
+table(de$eisced)
+de$eduyrs
+de$gndr
+table(de$hinctnta)
+
+data <- de[, c("hinctnta", "eduyrs", "agea", "gndr")]
+dim(data)
+```
+
+```{r}
+table(data$hinctnta, useNA = "ifany")
+table(data$gndr, useNA = "ifany")
+summary(data$eduyrs)
+summary(data$eduyrs)
+
+data$hinctnta[data$hinctnta %in% c(77, 88 ,99)] <- NA
+data$eduyrs[data$eduyrs %in% c(77,88, 99)] <- NA
+data$gndr[data$gndr %in% c(7, 8, 9)] <- NA
+data$agea[data$agea %in% c(999)] <- NA
+table(data$hinctnta, useNA = "ifany")
+table(data$eduyrs, useNA = "ifany")
+table(data$gndr, useNA = "ifany")
+table(data$agea, useNA = "ifany")
+```
+```{r}
+colSums(is.na(data)) #Missings in Variablen
+mean(is.na(data$hinctnta))
+mean(is.na(data$eduyrs))
+```
+```{r}
+class(data$hinctnta)
+data$hinctnta <- as.numeric(data$hinctnta)
+class(data$eduyrs)
+data$eduyrs <- as.numeric(data$eduyrs)
+class(data$gndr)
+data$gndr <- factor(data$gndr)
+```
+#Referenzdatensatz
+```{r}
+ref <- data[complete.cases(data),]
+dim(ref)
+colSums(is.na(ref))
+```
+#Deskriptive Statistik
+```{r}
+summary(ref$hinctnta)
+summary(ref$eduyrs)
+table(ref$gndr)
+summary(ref$agea)
+
+```
+#Regressionsmodell
+```{r}
+m1 <- lm(hinctnta ~ eduyrs, data = ref)
+summary(m1)
+
+m2 <- lm(hinctnta ~ eduyrs + agea + gndr, data = ref)
+summary(m2)
+```
+
+#Missingness
+```{r}
+#erst wichtige Werte abspeichern
+coef(m2)
+b <- coef(m2)["eduyrs"] #Referenzkoeffizient für Bildung
+b
+summary(m2)$r.squared
+nobs(m2)
+```
+#1.Missingness Szenario
+```{r}
+#MCAR: Werte fehlen völlig zufällig von hinctnta
+#Referenzdatensatz nehmen und künstlich fehelende Werte auf Einkommen erzeugen
+set.seed(123)
+mcar <- ref #kopie vom datensatz
+fehl <- sample(1:nrow(mcar), size = round(0.20*nrow(mcar))) #20% der Einkommenswerte werden zufällig gelöscht: in fehl sind die zufällig ausgewählten Zeilen von Personen, die gelöscht werden sollen
+mcar$hinctnta[fehl] <- NA #ich setze die zufälligen zeilen jetzt auf NA
+
+sum(is.na(mcar$hinctnta))
+mean(is.na(mcar$hinctnta))
+table(is.na(mcar$hinctnta))
+
+#Jetzt Regression (Complete Case Analysis, weil lm nur mit den vollständigen Werten rechnet)
+mcar1 <- lm(hinctnta ~ eduyrs + agea + gndr, data = mcar)
+summary(mcar1)
+
+bmcar <- coef(mcar1)["eduyrs"]
+bmcar
+b
+#koeffizienten sind nah beinander, künstlich eingeführte fehlende Werte unter MCAR verzerren den Koeffizienten kaum
+#Der unter MCAR geschätzte Koeffizient für Bildungsjahre liegt mit 0.224 nur geringfügig unter dem Referenzwert von 0.226. Die Abweichung beträgt rund -0.002 und ist damit sehr klein. Dies deutet darauf hin, dass zufällig fehlende Werte auf der Einkommensvariable die Schätzung des Bildungseffekts nur minimal beeinflussen.
+```
+
