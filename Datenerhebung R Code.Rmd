@@ -2,6 +2,7 @@
 title: "Datenerhebung Fehlerquellen: Missing Data Analyse"
 output: html_document
 date: "2026-03-11"
+Autorinnen: Karina und Naomi
 ---
 
 ```{r}
@@ -22,8 +23,6 @@ Missingness künstlich erzeugen
 Korrekturverfahren
 Ergebnisse mit Referenz vergleichen anhand von Bias der Koeffizienten
 ```{r}
-getwd()
-setwd("C:/Users/karin/Desktop/ESS Datenerhebung und Fehlerquellen")
 ess <- read.csv("ESS.csv")
 
 ```
@@ -114,8 +113,8 @@ summary(m2)
 ```{r}
 #erst wichtige Werte abspeichern
 coef(m2)
-b <- coef(m2)["eduyrs"] #Referenzkoeffizient für Bildung
-b
+refcoef<- coef(m2)["eduyrs"] #Referenzkoeffizient für Bildung
+refcoef
 summary(m2)$r.squared
 nobs(m2)
 ```
@@ -125,7 +124,7 @@ nobs(m2)
 #Referenzdatensatz nehmen und künstlich fehelende Werte auf Einkommen erzeugen
 set.seed(123)
 mcar <- ref #kopie vom datensatz
-fehl <- sample(1:nrow(mcar), size = round(0.20*nrow(mcar))) #20% der Einkommenswerte werden zufällig gelöscht: in fehl sind die zufällig ausgewählten Zeilen von Personen, die gelöscht werden sollen
+fehl <- sample(1:nrow(mcar), size = round(0.30*nrow(mcar))) #20% der Einkommenswerte werden zufällig gelöscht: in fehl sind die zufällig ausgewählten Zeilen von Personen, die gelöscht werden sollen
 mcar$hinctnta[fehl] <- NA #ich setze die zufälligen zeilen jetzt auf NA
 
 sum(is.na(mcar$hinctnta))
@@ -136,11 +135,429 @@ table(is.na(mcar$hinctnta))
 mcar1 <- lm(hinctnta ~ eduyrs + agea + gndr, data = mcar)
 summary(mcar1)
 
-bmcar <- coef(mcar1)["eduyrs"]
-bmcar
-b
+mcarcoef <- coef(mcar1)["eduyrs"]
+mcarcoef
+
 #koeffizienten sind nah beinander, künstlich eingeführte fehlende Werte unter MCAR verzerren den Koeffizienten kaum
 #Der unter MCAR geschätzte Koeffizient für Bildungsjahre liegt mit 0.224 nur geringfügig unter dem Referenzwert von 0.226. Die Abweichung beträgt rund -0.002 und ist damit sehr klein. Dies deutet darauf hin, dass zufällig fehlende Werte auf der Einkommensvariable die Schätzung des Bildungseffekts nur minimal beeinflussen.
 ```
+
+2. Missingness Szenario: MAR über Bildung
+Fehlende Werte von Einkommen entstehen nicht rein zufällig, sondern abhängig von einer beobachteten Variable in diesem Fall Bildung
+-> z.B. Personen mit niedriger Bildung machen häufiger keine Einkommensangaben
+```{r}
+set.seed(123)
+mar <- ref
+head(mar)
+p_miss_mar <- ifelse(mar$eduyrs <= 8, 0.60, 0.10)
+# Personen mit 8 oder weniger Bildungsjahren erhalten eine Missing-Wahrscheinlichkeit von 60 %
+# Personen mit mehr als 8 Bildungsjahren erhalten eine Missing-Wahrscheinlichkeit von 10 %
+
+u <- runif(nrow(mar)) #Zufallszahlen zwischen 0 und 1 erzeugen
+
+mar$hinctnta[u < p_miss_mar] <- NA #Lösch -Regel
+
+#prüfen
+sum(is.na(mar$hinctnta))
+mean(is.na(mar$hinctnta))
+table(is.na(mar$hinctnta))
+#vergleich von bildungsgruppen
+aggregate(is.na(hinctnta) ~ I(eduyrs <= 8), data = mar, mean)
+#bei Personen mit mehr als 10 Bildungsjahren fehlen nur 10% der Einkommenswerte als Personen mit weniger als 10 Bildungsjahren
+
+#Regression (Complete Case Analyse im MAR Szenario)
+mar1 <- lm(hinctnta ~ eduyrs + agea + gndr, data = mar)
+summary(mar1)
+
+marcoef <- coef(mar1)["eduyrs"]
+marcoef
+```
+
+3. Missingness Szenario: NMAR ob ein Wert fehlt, hängt vom Wert selbst ab, der fehlt--> Missingness von Einkommen, hängt vom Einkommen ab z.B sehr niedrige Einkommen oder sehr hohe Einkommen fehlen häufiger
+```{r}
+set.seed(123)
+nmar <- ref
+p_miss_nmar <- ifelse(nmar$hinctnta <= 2 | nmar$hinctnta >= 8, 0.50, 0.10) 
+#Missing-Wahrscheinlichkeit hängt vom Einkommen selbst ab
+v <- runif(nrow(nmar))
+nmar$hinctnta[v < p_miss_nmar] <- NA #Einkommen auf NA setzen, wenn Zufallszahl kleiner als Missing-Wahrscheinlichkeit ist
+
+#prüfen
+sum(is.na(nmar$hinctnta))
+mean(is.na(nmar$hinctnta))
+table(is.na(nmar$hinctnta))
+#nach Einkommensgruppen
+gruppe_extrem <- ref$hinctnta <= 2 | ref$hinctnta >= 8
+aggregate(is.na(nmar$hinctnta) ~ gruppe_extrem, FUN = mean)
+#Regression (Complete -Case- Analysis)
+nmar1 = lm(hinctnta ~ eduyrs + agea + gndr, data = nmar)
+summary(nmar1)
+
+nmarcoef <- coef(nmar1)["eduyrs"]
+nmarcoef
+```
+```{r}
+vergleich <- data.frame(
+  Szenario = c("Referenz", "MCAR", "MAR", "NMAR"),
+  beta_eduyrs = c(refcoef, mcarcoef, marcoef, nmarcoef),
+  Abweichung = c(0, mcarcoef - refcoef, marcoef  - refcoef, nmarcoef - refcoef)
+)
+
+```
+Jetzt Simulation 100 mal wiederholen, wiel wir brauchen nicht nur einen Wert sondern eine Verteilung von Ergebnissen und dann Ergebnisse wie mitteleren Koeffizienten, mittleren Bias, Standardabweichung berechnen.
+
+#Wiederholung der Simulation
+```{r}
+---
+title: "Datenerhebung Fehlerquellen: Missing Data Analyse"
+output: html_document
+date: "2026-03-11"
+Autorinnen: Karina und Naomi
+---
+
+```{r}
+library(haven)
+library(dplyr)
+library(mice)
+library(ggplot2)
+library(purrr)
+library(tidyr)
+library(broom)
+```
+Analyse Vorgehen:
+Ess Datensatz aufbereiten
+Subdatensatz mit Variablen erstellen
+Referzendatensatz aus vollständigen Fällen bilden
+Referenzregression rechnen
+Missingness künstlich erzeugen
+Korrekturverfahren
+Ergebnisse mit Referenz vergleichen anhand von Bias der Koeffizienten
+```{r}
+ess <- read.csv("ESS.csv")
+
+```
+
+
+#Bildungvariablen
+edudde1: Höchster allgemeinbildener Schulabschluss
+ 0-5: Grundschule nicht beendet, Grundschule, Realschule, Fachhochschulreife, Abitur
+ 7777 8888 9999 rausnehmen
+
+eisced - Highest level of education, ES - ISCED
+
+eduyrs - Years of full-time education completed
+
+Einkommen:
+hinctnta - Household's total net income, all sources
+
+```{r}
+de <- ess %>%
+  filter(cntry == "DE")
+
+View(de)
+summary(de)
+dim(de)
+str(de)
+
+table(de$eisced)
+de$eduyrs
+de$gndr
+table(de$hinctnta)
+
+data <- de[, c("hinctnta", "eduyrs", "agea", "gndr")]
+dim(data)
+```
+
+```{r}
+table(data$hinctnta, useNA = "ifany")
+table(data$gndr, useNA = "ifany")
+summary(data$eduyrs)
+summary(data$eduyrs)
+
+data$hinctnta[data$hinctnta %in% c(77, 88 ,99)] <- NA
+data$eduyrs[data$eduyrs %in% c(77,88, 99)] <- NA
+data$gndr[data$gndr %in% c(7, 8, 9)] <- NA
+data$agea[data$agea %in% c(999)] <- NA
+table(data$hinctnta, useNA = "ifany")
+table(data$eduyrs, useNA = "ifany")
+table(data$gndr, useNA = "ifany")
+table(data$agea, useNA = "ifany")
+```
+```{r}
+colSums(is.na(data)) #Missings in Variablen
+mean(is.na(data$hinctnta))
+mean(is.na(data$eduyrs))
+```
+```{r}
+class(data$hinctnta)
+data$hinctnta <- as.numeric(data$hinctnta)
+class(data$eduyrs)
+data$eduyrs <- as.numeric(data$eduyrs)
+class(data$gndr)
+data$gndr <- factor(data$gndr)
+```
+#Referenzdatensatz
+```{r}
+ref <- data[complete.cases(data),]
+dim(ref)
+colSums(is.na(ref))
+```
+#Deskriptive Statistik
+```{r}
+summary(ref$hinctnta)
+summary(ref$eduyrs)
+table(ref$gndr)
+summary(ref$agea)
+
+```
+#Regressionsmodell
+```{r}
+m1 <- lm(hinctnta ~ eduyrs, data = ref)
+summary(m1)
+
+m2 <- lm(hinctnta ~ eduyrs + agea + gndr, data = ref)
+summary(m2)
+```
+
+#Missingness
+```{r}
+#erst wichtige Werte abspeichern
+coef(m2)
+refcoef<- coef(m2)["eduyrs"] #Referenzkoeffizient für Bildung
+refcoef
+summary(m2)$r.squared
+nobs(m2)
+```
+#1.Missingness Szenario
+```{r}
+#MCAR: Werte fehlen völlig zufällig von hinctnta
+#Referenzdatensatz nehmen und künstlich fehelende Werte auf Einkommen erzeugen
+set.seed(123)
+mcar <- ref #kopie vom datensatz
+fehl <- sample(1:nrow(mcar), size = round(0.30*nrow(mcar))) #20% der Einkommenswerte werden zufällig gelöscht: in fehl sind die zufällig ausgewählten Zeilen von Personen, die gelöscht werden sollen
+mcar$hinctnta[fehl] <- NA #ich setze die zufälligen zeilen jetzt auf NA
+
+sum(is.na(mcar$hinctnta))
+mean(is.na(mcar$hinctnta))
+table(is.na(mcar$hinctnta))
+
+#Jetzt Regression (Complete Case Analysis, weil lm nur mit den vollständigen Werten rechnet)
+mcar1 <- lm(hinctnta ~ eduyrs + agea + gndr, data = mcar)
+summary(mcar1)
+
+mcarcoef <- coef(mcar1)["eduyrs"]
+mcarcoef
+
+#koeffizienten sind nah beinander, künstlich eingeführte fehlende Werte unter MCAR verzerren den Koeffizienten kaum
+#Der unter MCAR geschätzte Koeffizient für Bildungsjahre liegt mit 0.224 nur geringfügig unter dem Referenzwert von 0.226. Die Abweichung beträgt rund -0.002 und ist damit sehr klein. Dies deutet darauf hin, dass zufällig fehlende Werte auf der Einkommensvariable die Schätzung des Bildungseffekts nur minimal beeinflussen.
+```
+
+2. Missingness Szenario: MAR über Bildung
+Fehlende Werte von Einkommen entstehen nicht rein zufällig, sondern abhängig von einer beobachteten Variable in diesem Fall Bildung
+-> z.B. Personen mit niedriger Bildung machen häufiger keine Einkommensangaben
+```{r}
+set.seed(123)
+mar <- ref
+head(mar)
+p_miss_mar <- ifelse(mar$eduyrs <= 8, 0.60, 0.10)
+# Personen mit 8 oder weniger Bildungsjahren erhalten eine Missing-Wahrscheinlichkeit von 60 %
+# Personen mit mehr als 8 Bildungsjahren erhalten eine Missing-Wahrscheinlichkeit von 10 %
+
+u <- runif(nrow(mar)) #Zufallszahlen zwischen 0 und 1 erzeugen
+
+mar$hinctnta[u < p_miss_mar] <- NA #Lösch -Regel
+
+#prüfen
+sum(is.na(mar$hinctnta))
+mean(is.na(mar$hinctnta))
+table(is.na(mar$hinctnta))
+#vergleich von bildungsgruppen
+aggregate(is.na(hinctnta) ~ I(eduyrs <= 8), data = mar, mean)
+#bei Personen mit mehr als 10 Bildungsjahren fehlen nur 10% der Einkommenswerte als Personen mit weniger als 10 Bildungsjahren
+
+#Regression (Complete Case Analyse im MAR Szenario)
+mar1 <- lm(hinctnta ~ eduyrs + agea + gndr, data = mar)
+summary(mar1)
+
+marcoef <- coef(mar1)["eduyrs"]
+marcoef
+```
+
+3. Missingness Szenario: NMAR ob ein Wert fehlt, hängt vom Wert selbst ab, der fehlt--> Missingness von Einkommen, hängt vom Einkommen ab z.B sehr niedrige Einkommen oder sehr hohe Einkommen fehlen häufiger
+```{r}
+set.seed(123)
+nmar <- ref
+p_miss_nmar <- ifelse(nmar$hinctnta <= 2 | nmar$hinctnta >= 8, 0.50, 0.10) 
+#Missing-Wahrscheinlichkeit hängt vom Einkommen selbst ab
+v <- runif(nrow(nmar))
+nmar$hinctnta[v < p_miss_nmar] <- NA #Einkommen auf NA setzen, wenn Zufallszahl kleiner als Missing-Wahrscheinlichkeit ist
+
+#prüfen
+sum(is.na(nmar$hinctnta))
+mean(is.na(nmar$hinctnta))
+table(is.na(nmar$hinctnta))
+#nach Einkommensgruppen
+gruppe_extrem <- ref$hinctnta <= 2 | ref$hinctnta >= 8
+aggregate(is.na(nmar$hinctnta) ~ gruppe_extrem, FUN = mean)
+#Regression (Complete -Case- Analysis)
+nmar1 = lm(hinctnta ~ eduyrs + agea + gndr, data = nmar)
+summary(nmar1)
+
+nmarcoef <- coef(nmar1)["eduyrs"]
+nmarcoef
+```
+```{r}
+vergleich <- data.frame(
+  Szenario = c("Referenz", "MCAR", "MAR", "NMAR"),
+  beta_eduyrs = c(refcoef, mcarcoef, marcoef, nmarcoef),
+  Abweichung = c(0, mcarcoef - refcoef, marcoef  - refcoef, nmarcoef - refcoef)
+)
+
+```
+Jetzt Simulation 100 mal wiederholen, wiel wir brauchen nicht nur einen Wert sondern eine Verteilung von Ergebnissen und dann Ergebnisse wie mitteleren Koeffizienten, mittleren Bias, Standardabweichung berechnen.
+
+#Wiederholung der Simulation
+
+#MCAR
+```{r}
+sim_mcar <- function(ref_data) {
+  dat <- ref_data
+  
+  fehl <- sample(1:nrow(dat), size = round(0.30 * nrow(dat)))
+  dat$hinctnta[fehl] <- NA
+  
+  fit <- lm(hinctnta ~ eduyrs + agea + gndr, data = dat)
+  beta <- coef(fit)["eduyrs"]
+  
+  return(beta)
+}
+set.seed(123)
+res_mcar <- replicate(100, sim_mcar(ref))
+summary(res_mcar)
+mean(res_mcar)
+sd(res_mcar)
+mean(res_mcar - refcoef)
+```
+
+
+#MAR
+```{r}
+sim_mar <- function(ref) {
+  dat <- ref
+  
+  p_miss_mar <- ifelse(dat$eduyrs <= 8, 0.60, 0.10)
+  u <- runif(nrow(dat))
+  dat$hinctnta[u < p_miss_mar] <- NA
+  
+  fit <- lm(hinctnta ~ eduyrs +agea+gndr, data = dat)
+  beta <- coef(fit)["eduyrs"]
+  return(beta)
+}
+
+set.seed(123)
+res_mar <- replicate(100, sim_mar(ref))
+summary(res_mar)
+mean(res_mar)
+mean(res_mar - refcoef)
+
+
+```
+
+#NMAR
+```{r}
+sim_nmar <- function(ref){
+  dat <- ref
+  
+ p_miss_nmar <- ifelse(dat$hinctnta <= 2 | dat$hinctnta >= 8, 0.50, 0.10)
+  u <- runif(nrow(dat))
+  dat$hinctnta[u < p_miss_nmar] <- NA
+  
+  fit <- lm(hinctnta ~ eduyrs + agea + gndr, data = dat)
+  beta <- coef(fit)["eduyrs"]
+  
+  return(beta)
+}
+
+set.seed(123)
+res_nmar <- replicate(100, sim_nmar(ref))
+summary(res_nmar)
+mean(res_nmar)
+mean(res_nmar - refcoef)
+
+
+#Die wiederholten Simulationen zeigen, dass rein zufällige Missingness (MCAR) den geschätzten Bildungseffekt praktisch nicht verzerrt. Auch das gewählte MAR-Szenario führte nur zu einer geringen Abweichung vom Referenzwert. Demgegenüber zeigte sich unter NMAR eine deutlich stärkere negative Verzerrung. Dies spricht dafür, dass selektive Ausfälle, die direkt vom Einkommen selbst abhängen, für die Schätzung des Zusammenhangs zwischen Bildung und Einkommen besonders problematisch sind.
+```
+```{r}
+# MCAR
+mean(res_mcar)
+mean(res_mcar - refcoef)
+sd(res_mcar)
+sqrt(mean((res_mcar - refcoef)^2))
+
+
+# MAR
+mean(res_mar)
+mean(res_mar - refcoef)
+sd(res_mar)
+sqrt(mean((res_mar - refcoef)^2))
+
+# NMAR
+mean(res_nmar)
+mean(res_nmar - refcoef)
+sd(res_nmar)
+sqrt(mean((res_nmar - refcoef)^2))
+
+ergebnisse <- data.frame(
+  Szenario = c("MCAR", "MAR", "NMAR"),
+  Mean_Beta = c(mean(res_mcar), mean(res_mar), mean(res_nmar)),
+  Bias = c(mean(res_mcar - refcoef),
+           mean(res_mar - refcoef),
+           mean(res_nmar - refcoef)),
+  SD = c(sd(res_mcar), sd(res_mar), sd(res_nmar)),
+  RMSE = c(sqrt(mean((res_mcar - refcoef)^2)),
+           sqrt(mean((res_mar - refcoef)^2)),
+           sqrt(mean((res_nmar - refcoef)^2)))
+)
+
+ergebnisse
+ergebnisse_gerundet <- ergebnisse
+ergebnisse_gerundet[, -1] <- round(ergebnisse_gerundet[, -1], 4)
+ergebnisse_gerundet
+refcoef
+referenz <- data.frame(
+  Szenario = "Referenz",
+  Mean_Beta = refcoef,
+  Bias = 0,
+  SD = NA,
+  RMSE = 0
+)
+
+referenz
+gesamt <- rbind(referenz, ergebnisse)
+gesamt_gerundet <- gesamt
+gesamt_gerundet[, -1] <- round(gesamt_gerundet[, -1], 4)
+gesamt_gerundet
+
+hist(res_mcar)
+hist(res_mar)
+hist(res_nmar)
+boxplot(res_mcar, res_mar, res_nmar,
+        names = c("MCAR", "MAR", "NMAR"))
+
+#Verzerrung von Nmar
+Referenz = 0.2265
+NMAR = 0.1876
+
+#Differenz:
+0.1876 - 0.2265  
+#-0.0389
+#relativ zum referenzwert ist das:
+
+-0.0388/0.2265 #= -0.1713024 = 17% Unterschätzung
+#Die wiederholten Simulationen zeigen, dass MCAR und das gewählte MAR-Szenario den geschätzten Zusammenhang zwischen Bildungsjahren und Einkommensdezil kaum beeinflussen. Dagegen führt NMAR zu einer deutlichen negativen Verzerrung des Bildungseffekts. Selektive Ausfälle, die direkt vom Einkommen selbst abhängen, sind damit für die Schätzung wesentlich problematischer als rein zufällige oder an beobachtete Variablen gekoppelte Missingness.
+```
+```
+
+
 
 
