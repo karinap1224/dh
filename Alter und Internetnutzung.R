@@ -83,39 +83,57 @@ str(de)
 
 table(de$yrbrn)
 de$gndr
+de$eduyrs
 table(de$netustm)
+
+# Kontrollvariablen bereinigen
+
+de_data1 <- de %>% mutate(
+  gndr_num = as.numeric(gndr),
+  gndr_clean = ifelse(gndr_num == 9, NA, gndr_num),
+  
+  edu_num = as.numeric(eduyrs), 
+  edu_clean = ifelse(edu_num %in% c(77, 88, 99), NA, edu_num)
+)
 
 # Alter berechnen und bereinigen
 
-gebj <- de$yrbrn
-
-yrbrn_num <- as.numeric(gebj)
-
-de_data1 <- de %>% mutate(
-  gebj_num <- as.numeric(yrbrn_num),
+de_data2 <- de_data1 %>% mutate(
+  yrbrn_num = as.numeric(yrbrn),
   yrbrn_clean = ifelse(yrbrn_num %in% c(7777, 8888, 9999), NA, yrbrn_num),
-  alter = 2026 - yrbrn_clean)
-
+  alter = 2023 - yrbrn_clean)
 
 # Internetnutzung bereinigen
 
-de_data2 <- de_data1 %>% mutate(
+de_data_clean <- de_data2 %>% mutate(
   netustm_num = as.numeric(netustm),
   netustm_clean = ifelse(netustm_num %in% c(6666, 7777, 8888, 9999), NA, netustm_num)
 ) %>%
 
-# Nur unsere beiden relevanten Variablen behalten und alle NAs löschen
-  select(alter, netustm = netustm_clean) %>% drop_na()
+# Nur unsere relevanten Variablen behalten und alle NAs löschen
+select(
+  alter, 
+  netustm = netustm_clean, 
+  gndr = gndr_clean, 
+  eduyrs = edu_clean
+) %>% drop_na()
 
-df_true <- de_data2 #Referenzdatensatz erstellt 
-coef(df_true)
+
+df_true <- de_data_clean #Referenzdatensatz erstellt 
 View(df_true)
 
-# Modell berechnen für df_true
-lm_true <- lm(netustm ~ alter, data = df_true)
-View(lm_true)
-summary(lm_true)
 
+# Modelle berechnen für df_true
+
+lm_true1 <- lm(netustm ~ alter, data = df_true)
+coef(lm_true1)
+View(lm_true1)
+summary(lm_true1)
+
+lm_true2 <- lm(netustm ~ alter + gndr + eduyrs, data = df_true)
+coef(lm_true2)
+View(lm_true2)
+summary(lm_true2)
 
 # Schritt 2: Simulationsstudie durch Amputation (mice::ampute)
 # Bei jedem Mechanismus werden 20 % der Werte werden gelöscht.
@@ -123,34 +141,109 @@ set.seed(42) # Gleicher Zufall für Reproduzierbarkeit
 
 
 # MCAR:20 % der Werte werden gelöscht. 
-mcar_data <- mcar_data <- ampute(df_true, prop = 0.2, mech = "MCAR")$amp
+mcar_data <- ampute(df_true, prop = 0.2, mech = "MCAR")$amp
+summary(mcar_data)
 
 
 # MAR: Durch Gewichte: Wahrscheinlichkeit für ein fehlendes netustm hängt 
 # ausschlieslich vom Alter ab (Ältere haben eher ein NA)
+
+ncol(df_true) == 4 # Ergebnis auf TRUE
+
+# 2. PATTERNS: Sagen, WO Lücken entstehen sollen
+# 1 = Behalten, 0 = Löschen. 
+# Reihenfolge: alter(1), netustm(0), gndr(1), eduyrs(1)
+mypattern <- c(1, 0, 1, 1)
+
+# 3. WEIGHTS: Sagen, WARUM Lücken entstehen (Der MAR-Mechanismus)
+# Wir geben nur dem "alter" (Spalte 1) ein Gewicht von 1, dem Rest eine 0.
+# Dadurch steuert ausschließlich das Alter, ob netustm gelöscht wird.
+myweights_mar <- c(1, 0, 0, 0)
+
+# 4. Amputation durchführen
 set.seed(42)
-mar_data <- ampute(df_true, prop = 0.2, mech = "MAR", weights = c(1, 0))$amp
+amp_mar <- ampute(df_true, 
+                  prop = 0.2, 
+                  mech = "MAR", 
+                  patterns = mypattern, 
+                  weights = myweights_mar)
+
+mar_data <- amp_mar$amp
+summary(mar_data$netustm)
 
 
 # MNAR: Wahrscheinlichkeit für ein fehlendes netustm hängt vom wahren Wert der 
 # Internetnutzung selbst ab. 
 set.seed(42)
-mnar_data <- ampute(df_true, prop = 0.2, mech = "MNAR", weights = c(0, 1))$amp
+ncol(df_true) == 4 # Ergebnis auf TRUE
+
+myweights_mnar <- c(0, 1, 0, 0)
+
+set.seed(42)
+amp_mnar <- ampute(df_true, 
+                  prop = 0.2, 
+                  mech = "MNAR", 
+                  patterns = mypattern, 
+                  weights = myweights_mnar)
+
+mnar_data <- amp_mnar$amp
+summary(mnar_data$netustm)
 
 
 # Phase 3: Analyse und Korrekturmaßnahmen
 # 1) Complete Case Analysis (CCA/Listwise Deletion)
 
-lm_mcar <- lm(netustm ~ alter, data = mcar_data)
+lm_mcar <- lm(netustm ~ alter + gndr + eduyrs, data = mcar_data)
 coef(lm_mcar)
+summary(lm_mcar)
 
-lm_mar <- lm(netustm ~ alter, data = mar_data)
+lm_mar <- lm(netustm ~ alter + gndr + eduyrs, data = mar_data)
 coef(lm_mar)
+summary(lm_mar)
 
-lm_mnar <- lm(netustm ~ alter, data = mnar_data)
+lm_mnar <- lm(netustm ~ alter + gndr + eduyrs, data = mnar_data)
 coef(lm_mnar)
+summary(lm_mnar)
+
+# Vergleich von Mechanismen und Referenzdatensatz
+# MCAR
+coef(lm_true2)
+coef(lm_mcar)
+summary(lm_true2)
+summary(lm_mcar)
+
+# MAR
+coef(lm_true2)
+coef(lm_mar)
+summary(lm_true2)
+summary(lm_mar)
+
+#MNAR
+coef(lm_true2)
+coef(lm_mnar)
+summary(lm_true2)
+summary(lm_mnar)
 
 
+# 2) Inverse Probability Weighting (IPW)
+
+# MAR
+# 1.	Missing-Indikator erstellen: Erstellt eine Hilfsvariable (Dummy), 
+#     die angibt, ob der Wert fehlt oder nicht.
+mar_data$R_obs <- ifelse(is.na(mar_data$netustm), 0, 1)
+
+# 2.	Propensity Modell schätzen: Rechnet eine logistische Regression, 
+#     um die Beobachtungswahrscheinlichkeit vorherzusagen.
+prop_model <- glm(R_obs ~ alter + gndr + eduyrs, family = binomial, data = mar_data)
+summary(prop_model)
+
+# 3.	Gewichte berechnen: Das Gewicht ist der Kehrwert der vorhergesagten 
+#     Wahrscheinlichkeit (Inverse Probability).
+mar_data$weight <- 1 / fitted(prop_model)
+
+# 4.	Gewichtete Regression: Führt die finale Analyse durch. Für die Analyse 
+#     nutzt ihr nur die vollständigen Fälle, aber wendet die Gewichte an.
+lm(netustm ~ alter + gndr + eduyrs, data = subset(mar_data, R_obs == 1), weights = weight)
 
 
 
